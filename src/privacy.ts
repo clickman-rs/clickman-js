@@ -22,6 +22,8 @@ export const defaultFragments = [
   "birth",
 ];
 const truncate = (value: string) => Array.from(value).slice(0, 1024).join("");
+// Unicode mode treats paired surrogates as one code point; only lone halves match.
+export const validUnicode = (value: string) => !/[\ud800-\udfff]/u.test(value);
 export function flatten(input: Properties): Record<string, Scalar> {
   const output: Record<string, Scalar> = Object.create(null);
   function visit(value: Json, path: string, depth: number) {
@@ -42,7 +44,16 @@ export function flatten(input: Properties): Record<string, Scalar> {
             : value;
   }
   // JSON serialization rejects cycles and normalizes non-JSON values before traversal.
-  const normalized = JSON.parse(JSON.stringify(input)) as Properties;
+  const normalized = JSON.parse(
+    JSON.stringify(input, (key, value) => {
+      if (
+        !validUnicode(key) ||
+        (typeof value === "string" && !validUnicode(value))
+      )
+        throw new Error("Properties must contain valid Unicode strings.");
+      return value;
+    }),
+  ) as Properties;
   if (
     !normalized ||
     typeof normalized !== "object" ||

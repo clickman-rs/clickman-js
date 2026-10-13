@@ -42,6 +42,13 @@ later user events are delivered in that order. Call `reset()` at logout or befor
 identifying a different account. Reset starts a fresh visitor without rewriting
 already queued events. `setConsent(false)` clears this client's queue and visitor
 identity; a request already sent to the server cannot be recalled.
+Repeated `identify` calls for the current account are idempotent. A queue occupied
+by pending identity links rejects a new event if it cannot keep it; `track` never
+returns an ID for an event it immediately discards. Queue expiry and capacity
+drops are reported through `onDrop`.
+Text must contain valid Unicode; unpaired UTF-16 surrogates (for example, a sliced
+emoji) reject the operation before storage so one invalid event cannot discard
+its valid neighbors at ingest.
 
 Delivery is at least once. IDs remain stable after restart; server deduplication
 depends on the project's raw-event retention window. One IndexedDB lease per
@@ -59,12 +66,15 @@ No cookies, fingerprinting, IP collection, lifecycle events or automatic page
 tracking are added. Sensitive properties/context are filtered before storage;
 the Rust server applies its own project policy again. URL paths can still contain
 personal information: use custom page properties or event names when necessary.
+Queue limits must be positive integers and the flush interval a positive finite
+number. The endpoint and source key are fixed at initialization; create another
+client to use another source. Existing version 0.1.0 browser queues upgrade in
+place without replacing event IDs or visitor identity.
 
-Project settings can restrict browser origins. Add your site's scheme + hostname
-
-- port to `allowed_origins`. Native clients without an Origin remain supported.
-  Only public batch and identify endpoints support CORS; dashboard requests use the
-  host session or an explicitly authorized access key.
+Project settings can restrict browser origins. Add your site's scheme, hostname
+and port to `allowed_origins`. Native clients without an Origin remain supported.
+Only public batch and identify endpoints support CORS; dashboard requests use the
+host session or an explicitly authorized access key.
 
 `pnpm test` runs shared protocol fixtures and IndexedDB delivery contracts.
 `pnpm test:browser` runs real browser persistence, cancellation and script builds.

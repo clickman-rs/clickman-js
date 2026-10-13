@@ -1,39 +1,20 @@
-import { Queue, uuidv7, fresh, type Event } from "./store";
-import { prepared, type Properties } from "./privacy";
+import { Queue, uuidv7, fresh } from "./store";
+import { prepared, validUnicode, type Properties } from "./privacy";
+import {
+  configuration,
+  MAX_TIMER_DELAY,
+  VERSION,
+  type Options,
+} from "./configuration";
+import { deliveryOutcome, retryAfter, requestBody } from "./delivery";
 export type { Properties, Json, Scalar } from "./privacy";
-export interface Options {
-  endpoint: string;
-  writeKey: string;
-  /** No storage, identification, or tracking occurs until consent is true. */
-  consent: boolean;
-  context?: Properties;
-  filterFragments?: string[];
-  maxQueueEvents?: number;
-  maxQueueBytes?: number;
-  flushIntervalMs?: number;
-  fetch?: typeof globalThis.fetch;
-  onError?: (error: Error) => void;
-  onDrop?: (count: number, reason: string) => void;
-}
-export function deliveryOutcome(status: number) {
-  return status >= 200 && status < 300
-    ? "delivered"
-    : [400, 413, 415].includes(status)
-      ? "refused"
-      : "retry";
-}
-export function retryAfter(value: string | null, now = Date.now()) {
-  if (!value) return 0;
-  const seconds = Number(value);
-  const delay = Number.isFinite(seconds)
-    ? seconds * 1000
-    : Date.parse(value) - now;
-  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
-}
+export type { Options } from "./configuration";
+export { deliveryOutcome, retryAfter } from "./delivery";
 function text(value: string, max: number) {
   if (
     typeof value !== "string" ||
     !value.length ||
+    !validUnicode(value) ||
     Array.from(value).length > max ||
     /[\u0000-\u001f\u007f-\u009f]/.test(value)
   )
@@ -41,21 +22,10 @@ function text(value: string, max: number) {
   return value;
 }
 export function createClickman(options: Options) {
-  const base = new URL(options.endpoint);
-  if (
-    !["https:", "http:"].includes(base.protocol) ||
-    base.username ||
-    base.password ||
-    base.search ||
-    base.hash
-  )
-    throw new Error(
-      "Endpoint must be an HTTP(S) base URL without credentials, query or fragment.",
-    );
-  base.pathname = `${base.pathname.replace(/\/$/, "")}/`;
-  if (!options.writeKey?.trim())
-    throw new Error("A public source write key is required.");
+  const { base, writeKey, maxCount, maxBytes, flushInterval } =
+    configuration(options);
   let consent = options.consent === true;
+  let consentGeneration = 0;
   let queue: Promise<Queue> | null = null;
   let closed = false;
   let inflight: Promise<void> | null = null;
@@ -92,56 +62,53 @@ export function createClickman(options: Options) {
           );
         const digest = await crypto.subtle.digest(
           "SHA-256",
-          new TextEncoder().encode(`${base.href}\n${options.writeKey}`),
+          new TextEncoder().encode(`${base.href}\n${writeKey}`),
         );
         const scope = Array.from(new Uint8Array(digest), (b) =>
           b.toString(16).padStart(2, "0"),
         ).join("");
-        return Queue.open(
-          scope,
-          Math.max(1, Math.min(options.maxQueueEvents ?? 10000, 10000)),
-          Math.max(64000, Math.min(options.maxQueueBytes ?? 5000000, 5000000)),
-        );
+        return Queue.open(scope, maxCount, maxBytes);
       })().catch((error) => {
         queue = null;
         throw error;
       });
     return queue;
   };
-  const schedule = (delay = options.flushIntervalMs ?? 30000) => {
+  const schedule = (delay = flushInterval) => {
     if (closed || !consent) return;
     clearTimeout(timer);
     timer = setTimeout(
       () => {
         void flush().catch(report);
       },
-      Math.max(delay, 20),
+      Math.min(MAX_TIMER_DELAY, Math.max(delay, 20)),
     );
   };
   async function flush() {
     live();
     if (!consent) return;
     if (inflight) return inflight;
+    const generation = consentGeneration;
     inflight = (async () => {
       const store = await storage();
-      for (let run = 0; run < 20 && !closed && consent; run++) {
+      for (
+        let run = 0;
+        run < 20 && !closed && consent && generation === consentGeneration;
+        run++
+      ) {
         const taken = await store.take(owner);
+        if (closed || !consent || generation !== consentGeneration) {
+          await store.release(owner);
+          schedule(20);
+          return;
+        }
+        dropped(taken.dropped, "queue_expired");
         if (!taken.rows.length) {
           schedule(taken.wait || undefined);
           return;
         }
         const first = taken.rows[0].command;
-        const path = first.kind === "identify" ? "v1/identify" : "v1/batch";
-        const body =
-          first.kind === "identify"
-            ? { anonymousId: first.anonymousId, externalId: first.externalId }
-            : {
-                sentAt: new Date().toISOString(),
-                batch: taken.rows.map(
-                  (row) =>
-                    (row.command as { kind: "track"; event: Event }).event,
-                ),
-              };
+        const { path, body } = requestBody(taken.rows);
         try {
           const signal = AbortSignal.any([
             lifetime.signal,
@@ -152,7 +119,7 @@ export function createClickman(options: Options) {
             credentials: "omit",
             redirect: "error",
             headers: {
-              authorization: `Bearer ${options.writeKey}`,
+              authorization: `Bearer ${writeKey}`,
               "content-type": "application/json",
             },
             body: JSON.stringify(body),
@@ -213,7 +180,7 @@ export function createClickman(options: Options) {
       {
         ...options.context,
         ...context,
-        library: { name: "clickman-js", version: "0.1.0" },
+        library: { name: "clickman-js", version: VERSION },
         device: { type: "web" },
       },
       64,
@@ -249,6 +216,7 @@ export function createClickman(options: Options) {
     live();
     if (!consent) return false;
     const result = await store.append((state) => {
+      if (state.externalId === externalId) return null;
       if (
         state.externalId !== state.anonymousId &&
         state.externalId !== externalId
@@ -273,9 +241,10 @@ export function createClickman(options: Options) {
   }
   async function setConsent(value: boolean) {
     live();
-    consent = value;
+    consent = value === true;
     clearTimeout(timer);
-    if (!value) {
+    if (!consent) {
+      consentGeneration++;
       if (queue) await (await queue).clear();
     } else schedule(20);
   }

@@ -34,7 +34,7 @@ export interface State {
   nextAttempt: number;
 }
 interface Schema extends DBSchema {
-  entries: { key: number; value: Entry };
+  entries: { key: number; value: Entry; indexes: { created: number } };
   meta: { key: string; value: State };
 }
 export function uuidv7(now = Date.now()) {
@@ -70,10 +70,16 @@ export class Queue {
     readonly maxBytes: number,
   ) {}
   static async open(scope: string, maxCount: number, maxBytes: number) {
-    const db = await openDB<Schema>(`clickman-v1-${scope}`, 1, {
-      upgrade(db) {
-        db.createObjectStore("entries", { keyPath: "id", autoIncrement: true });
-        db.createObjectStore("meta");
+    const db = await openDB<Schema>(`clickman-v1-${scope}`, 2, {
+      upgrade(db, oldVersion, _newVersion, transaction) {
+        if (oldVersion < 1) {
+          db.createObjectStore("entries", {
+            keyPath: "id",
+            autoIncrement: true,
+          });
+          db.createObjectStore("meta");
+        }
+        transaction.objectStore("entries").createIndex("created", "created");
       },
       blocking() {
         db.close();
@@ -103,18 +109,23 @@ export class Queue {
       await tx.done;
       return result;
     } catch (error) {
-      tx.abort();
+      try {
+        tx.abort();
+      } catch {
+        /* A failed IndexedDB request may already have aborted the transaction. */
+      }
       await tx.done.catch(() => undefined);
       throw error;
     }
   }
-  async append(make: (state: State) => Command) {
+  async append(make: (state: State) => Command | null) {
     return this.change(async (state, entries) => {
       const command = make(state);
+      if (!command) return { command, dropped: 0, count: state.count };
       const bytes = new TextEncoder().encode(JSON.stringify(command)).length;
       if (bytes > 64000 || bytes > this.maxBytes)
         throw new Error("Event exceeds the queue item size limit.");
-      await entries.add({ created: Date.now(), bytes, command });
+      const id = await entries.add({ created: Date.now(), bytes, command });
       state.count++;
       state.bytes += bytes;
       let dropped = 0;
@@ -123,7 +134,7 @@ export class Queue {
         // A pending identity link must survive event queue pressure.
         while (cursor?.value.command.kind === "identify")
           cursor = await cursor.continue();
-        if (!cursor)
+        if (!cursor || cursor.primaryKey === id)
           throw new Error(
             "Queue capacity is occupied by pending identity links.",
           );
@@ -138,22 +149,36 @@ export class Queue {
   async take(owner: string) {
     return this.change(async (state, entries) => {
       const now = Date.now();
+      // Expiry follows device time, which can differ from insertion order after a clock correction.
+      let expired = await entries
+        .index("created")
+        .openCursor(IDBKeyRange.upperBound(now - 30 * 86400000, true));
+      let dropped = 0;
+      while (expired) {
+        state.count--;
+        state.bytes -= expired.value.bytes;
+        await expired.delete();
+        dropped++;
+        expired = await expired.continue();
+      }
       if (
         state.nextAttempt > now ||
         (state.leaseUntil > now && state.owner !== owner)
-      )
+      ) {
+        const oldest = await entries.index("created").openKeyCursor();
+        const untilExpiry = oldest
+          ? oldest.key + 30 * 86400000 + 1 - now
+          : Infinity;
         return {
           rows: [] as Entry[],
-          wait: Math.max(state.nextAttempt, state.leaseUntil) - now,
+          wait: Math.min(
+            Math.max(state.nextAttempt, state.leaseUntil) - now,
+            untilExpiry,
+          ),
+          dropped,
         };
-      // Delete expired data in small cursor steps without reading the entire queue.
-      let cursor = await entries.openCursor();
-      while (cursor && cursor.value.created < now - 30 * 86400000) {
-        state.count--;
-        state.bytes -= cursor.value.bytes;
-        await cursor.delete();
-        cursor = await cursor.continue();
       }
+      let cursor = await entries.openCursor();
       const rows: Entry[] = [];
       let bytes = 0;
       while (
@@ -176,7 +201,7 @@ export class Queue {
         state.owner = owner;
         state.leaseUntil = now + 60000;
       }
-      return { rows, wait: 0 };
+      return { rows, wait: 0, dropped };
     });
   }
   async finish(
