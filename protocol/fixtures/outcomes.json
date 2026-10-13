@@ -1,0 +1,65 @@
+{
+  "description": "What the response to a batch does to it: a delivered or refused batch leaves the queue, any other answer keeps it for a retry. Status 0 is no response at all.",
+  "cases": [
+    {
+      "name": "accepted",
+      "status": 202,
+      "outcome": "delivered"
+    },
+    {
+      "name": "any success",
+      "status": 200,
+      "outcome": "delivered"
+    },
+    {
+      "name": "malformed",
+      "status": 400,
+      "outcome": "refused"
+    },
+    {
+      "name": "too large",
+      "status": 413,
+      "outcome": "refused"
+    },
+    {
+      "name": "unsupported encoding",
+      "status": 415,
+      "outcome": "refused"
+    },
+    {
+      "name": "a wrong write key",
+      "status": 401,
+      "outcome": "retry"
+    },
+    {
+      "name": "not found",
+      "status": 404,
+      "outcome": "retry"
+    },
+    {
+      "name": "rate limited",
+      "status": 429,
+      "outcome": "retry"
+    },
+    {
+      "name": "a server error",
+      "status": 500,
+      "outcome": "retry"
+    },
+    {
+      "name": "unavailable",
+      "status": 503,
+      "outcome": "retry"
+    },
+    {
+      "name": "a redirect",
+      "status": 301,
+      "outcome": "retry"
+    },
+    {
+      "name": "no response",
+      "status": 0,
+      "outcome": "retry"
+    }
+  ]
+}
