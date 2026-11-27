@@ -76,7 +76,74 @@ and port to `allowed_origins`. Native clients without an Origin remain supported
 Only public batch and identify endpoints support CORS; dashboard requests use the
 host session or an explicitly authorized access key.
 
-`pnpm test` runs shared protocol fixtures and IndexedDB delivery contracts.
+`pnpm test` runs shared protocol fixtures (including the catalog and identity
+fixtures), type-level tests and IndexedDB delivery contracts.
 `pnpm test:browser` runs real browser persistence, cancellation and script builds.
 Protocol snapshots are copied from `clickman-server/protocol`; browser identity
 and IndexedDB are documented extensions, not the native SQLite lifecycle schema.
+
+## Typed events and catalog
+
+Declare events once to get a typed `track` and the source's event catalog (the
+`catalog.json` format of the protocol). Types are inferred from the declaration
+values, so they also work from plain JavaScript:
+
+```js
+import {
+  defineEvents,
+  event,
+  oneOf,
+  integer,
+  number,
+  text,
+  catalog,
+} from "/vendor/clickman.js";
+
+export const events = defineEvents({
+  exportCompleted: event(
+    `Export wrote every file
+     and they are ready to use.`,
+    {
+      format: oneOf(["wav", "flac"], "File format of the export."),
+      mode: oneOf(["fullMix", "perTrack"], "One mix or one file per track."),
+      tracks: integer("How many tracks the export contains."),
+      durationSeconds: number("Length of the audio in seconds.").optional(),
+      title: text("Title the user gave the export.").optional(),
+    },
+  ),
+  projectCreated: event("A new empty project was created."),
+});
+
+// Sends export_completed with { format: "wav", mode: "per_track", tracks: 3 }.
+await analytics.track(
+  events.exportCompleted({ format: "wav", mode: "perTrack", tracks: 3 }),
+);
+await analytics.track(events.projectCreated(), { screen: "start" }); // context
+const json = JSON.stringify(catalog(events), null, 2); // the source catalog
+```
+
+Descriptions are required arguments; the catalog gets each on one line (every
+line trimmed, blank lines dropped, the rest joined with single spaces).
+`integer` takes safe integers, `number` finite numbers, `oneOf` only its listed
+strings (typed as a literal union) and `text` any string: free text is declared
+explicitly because it can carry personal data, and the privacy filter still
+applies. Properties are required unless `.optional()`; an absent or `undefined`
+optional property is left out of the event, never sent as `null`.
+
+Event names, property keys and `oneOf` values are sent in snake case; code keeps
+the declared spelling. Words split at every character that is not a letter or
+digit, before an uppercase letter that follows a lowercase one (digits may sit
+between them) and before the last capital of an uppercase run followed by a
+lowercase letter; words are lowercased and joined with `_`. `ExportCompleted`,
+`exportCompleted` and `EXPORT_COMPLETED` all become `export_completed`,
+`perTrack` becomes `per_track` and `HTTPStatus` becomes `http_status`. Names must
+then match `^[a-z][a-z0-9_]*$`.
+
+`defineEvents` throws a `CatalogError` whose `reason` is the server's refusal
+reason (`invalid_name`, `duplicate_name`, `missing_description`,
+`standard_event`, …) for a declaration the server would refuse, including the
+events SDKs record themselves (`page_view`, `app_opened`, …). Building an event
+with a wrong, missing or undeclared property throws a `TypeError`, and `track`
+refuses objects that were not built from a declaration. `catalog` keeps
+declaration order; merge modules with `catalog({ ...editorEvents, ...exportEvents })`.
+The string form `track(name, properties, context)` still works.

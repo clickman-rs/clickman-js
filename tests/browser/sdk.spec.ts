@@ -62,3 +62,45 @@ test("standalone script build exposes the same API without collecting before con
   expect(result).toBeNull();
   expect((await (await request.get("/requests")).json()).length).toBe(before);
 });
+test("typed events from the ESM build reach the batch endpoint in catalog names", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  const exported = await page.evaluate(async (writeKey) => {
+    const {
+      createClickman,
+      defineEvents,
+      event,
+      oneOf,
+      integer,
+      text,
+      catalog,
+    } = await import("/clickman.js");
+    const events = defineEvents({
+      ExportCompleted: event("Export wrote every file.", {
+        mode: oneOf(["fullMix", "perTrack"], "One mix or one file per track."),
+        trackCount: integer("How many tracks the export contains."),
+        title: text("Title the user gave the export.").optional(),
+      }),
+    });
+    const client = createClickman({
+      endpoint: `${location.origin}/prefix`,
+      writeKey,
+      consent: true,
+    });
+    await client.track(
+      events.ExportCompleted({ mode: "perTrack", trackCount: 2 }),
+    );
+    await client.flush();
+    await client.close();
+    return catalog(events);
+  }, crypto.randomUUID());
+  expect(exported.events.map((e: { name: string }) => e.name)).toEqual([
+    "export_completed",
+  ]);
+  const rows = await (await request.get("/requests")).json();
+  const [tracked] = rows.at(-1).body.batch;
+  expect(tracked.event).toBe("export_completed");
+  expect(tracked.properties).toEqual({ mode: "per_track", track_count: 2 });
+});

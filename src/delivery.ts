@@ -8,6 +8,11 @@ export function deliveryOutcome(status: number) {
       : "retry";
 }
 
+/** A link follows the batch outcome, except that 422 (linked to another account) refuses it. */
+export function linkOutcome(status: number) {
+  return status === 422 ? "refused" : deliveryOutcome(status);
+}
+
 export function retryAfter(value: string | null, now = Date.now()) {
   if (!value) return 0;
   const text = value.trim();

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "name": "app_installed",
+      "description": "The first launch the client store remembers.",
+      "properties": [
+        { "name": "version", "description": "Version of the launched application.", "type": "string", "text": true, "required": true },
+        { "name": "build", "description": "Build of the launched application.", "type": "string", "text": true, "required": true }
+      ]
+    },
+    {
+      "name": "app_updated",
+      "description": "A launch of another version or build than the last one.",
+      "properties": [
+        { "name": "version", "description": "Version of the launched application.", "type": "string", "text": true, "required": true },
+        { "name": "build", "description": "Build of the launched application.", "type": "string", "text": true, "required": true },
+        { "name": "previous_version", "description": "Version of the previous launch.", "type": "string", "text": true, "required": true },
+        { "name": "previous_build", "description": "Build of the previous launch.", "type": "string", "text": true, "required": true }
+      ]
+    },
+    {
+      "name": "app_opened",
+      "description": "The application was launched or came back to the foreground.",
+      "properties": [
+        { "name": "from_background", "description": "Whether it came back from the background rather than being launched.", "type": "boolean", "required": true }
+      ]
+    },
+    {
+      "name": "app_backgrounded",
+      "description": "The application left the foreground.",
+      "properties": []
+    },
+    {
+      "name": "page_view",
+      "description": "The browser SDK showed a page with consent; host properties may be added.",
+      "properties": [
+        { "name": "url", "description": "Page address without query, fragment or credentials.", "type": "string", "text": true, "required": true },
+        { "name": "path", "description": "Path of the page address.", "type": "string", "text": true, "required": true }
+      ]
+    }
+  ]
+}

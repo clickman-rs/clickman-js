@@ -1,0 +1,146 @@
+{
+  "description": "Every SDK declares the reference events below in its own language, exports them as `catalog` exactly, and tracks each sample with exactly its `properties`. The description of `export_completed` is written over two lines in the declaration and of `mode` with surrounding spaces; the export joins lines with one space and trims. `invalid` lists catalogs a server refuses on upload, with the reason.",
+  "declarations": [
+    {
+      "event": "ExportCompleted",
+      "description": ["Export wrote every file", "and they are ready to use."],
+      "properties": [
+        { "field": "format", "type": "Format: wav | flac", "required": true, "description": "File format of the export." },
+        { "field": "mode", "type": "Mode: fullMix | perTrack", "required": true, "description": "  Whether one mix or one file per track was written.  " },
+        { "field": "tracks", "type": "unsigned integer", "required": true, "description": "How many tracks the export contains." },
+        { "field": "durationSeconds", "type": "floating point", "required": false, "description": "Length of the exported audio in seconds." },
+        { "field": "normalized", "type": "boolean", "required": false, "description": "Whether loudness normalization was applied." },
+        { "field": "title", "type": "free text", "required": false, "description": "Title the user gave the export." }
+      ]
+    },
+    {
+      "event": "ProjectCreated",
+      "description": ["A new empty project was created."],
+      "properties": []
+    }
+  ],
+  "catalog": {
+    "version": 1,
+    "events": [
+      {
+        "name": "export_completed",
+        "description": "Export wrote every file and they are ready to use.",
+        "properties": [
+          { "name": "format", "description": "File format of the export.", "type": "string", "values": ["wav", "flac"], "required": true },
+          { "name": "mode", "description": "Whether one mix or one file per track was written.", "type": "string", "values": ["full_mix", "per_track"], "required": true },
+          { "name": "tracks", "description": "How many tracks the export contains.", "type": "integer", "required": true },
+          { "name": "duration_seconds", "description": "Length of the exported audio in seconds.", "type": "number", "required": false },
+          { "name": "normalized", "description": "Whether loudness normalization was applied.", "type": "boolean", "required": false },
+          { "name": "title", "description": "Title the user gave the export.", "type": "string", "text": true, "required": false }
+        ]
+      },
+      {
+        "name": "project_created",
+        "description": "A new empty project was created.",
+        "properties": []
+      }
+    ]
+  },
+  "samples": [
+    {
+      "name": "every property",
+      "value": { "event": "ExportCompleted", "format": "flac", "mode": "perTrack", "tracks": 3, "durationSeconds": 12.5, "normalized": true, "title": "Демо" },
+      "event": "export_completed",
+      "properties": { "format": "flac", "mode": "per_track", "tracks": 3, "duration_seconds": 12.5, "normalized": true, "title": "Демо" }
+    },
+    {
+      "name": "optional properties are omitted, never null",
+      "value": { "event": "ExportCompleted", "format": "wav", "mode": "fullMix", "tracks": 1 },
+      "event": "export_completed",
+      "properties": { "format": "wav", "mode": "full_mix", "tracks": 1 }
+    },
+    {
+      "name": "an event without properties",
+      "value": { "event": "ProjectCreated" },
+      "event": "project_created",
+      "properties": {}
+    }
+  ],
+  "invalid": [
+    {
+      "name": "an unknown version",
+      "catalog": { "version": 2, "events": [] },
+      "reason": "unsupported_version"
+    },
+    {
+      "name": "a name that is not snake case",
+      "catalog": { "version": 1, "events": [{ "name": "ExportCompleted", "description": "Done.", "properties": [] }] },
+      "reason": "invalid_name"
+    },
+    {
+      "name": "two events with one name",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [] }, { "name": "a", "description": "Two.", "properties": [] }] },
+      "reason": "duplicate_name"
+    },
+    {
+      "name": "an event without a description",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": " ", "properties": [] }] },
+      "reason": "missing_description"
+    },
+    {
+      "name": "a property without a description",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "", "type": "boolean", "required": true }] }] },
+      "reason": "missing_description"
+    },
+    {
+      "name": "a multi-line description",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One\nTwo.", "properties": [] }] },
+      "reason": "invalid_description"
+    },
+    {
+      "name": "a description with a control character",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One\u0000two.", "properties": [] }] },
+      "reason": "invalid_description"
+    },
+    {
+      "name": "two properties with one name",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "boolean", "required": true }, { "name": "b", "description": "B.", "type": "integer", "required": false }] }] },
+      "reason": "duplicate_name"
+    },
+    {
+      "name": "an unknown type",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "date", "required": true }] }] },
+      "reason": "invalid_type"
+    },
+    {
+      "name": "a string that is neither values nor text",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "string", "required": true }] }] },
+      "reason": "undeclared_text"
+    },
+    {
+      "name": "a string with both values and text",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "string", "values": ["x"], "text": true, "required": true }] }] },
+      "reason": "invalid_values"
+    },
+    {
+      "name": "values on a number",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "integer", "values": ["1"], "required": true }] }] },
+      "reason": "invalid_values"
+    },
+    {
+      "name": "repeated values",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "string", "values": ["x", "x"], "required": true }] }] },
+      "reason": "invalid_values"
+    },
+    {
+      "name": "a value with a control character",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "string", "values": ["x\u0000"], "required": true }] }] },
+      "reason": "invalid_values"
+    },
+    {
+      "name": "a property without required",
+      "catalog": { "version": 1, "events": [{ "name": "a", "description": "One.", "properties": [{ "name": "b", "description": "B.", "type": "boolean" }] }] },
+      "reason": "malformed_catalog"
+    },
+    {
+      "name": "a standard event",
+      "catalog": { "version": 1, "events": [{ "name": "app_opened", "description": "Opened.", "properties": [] }] },
+      "reason": "standard_event"
+    }
+  ]
+}

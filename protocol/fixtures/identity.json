@@ -1,0 +1,108 @@
+{
+  "description": "Native identity, as in the browser SDK. `identifyInstallation` makes a store that tracks as `*` track as a new anonymous visitor `anon:<UUID>` it keeps across launches. `identify` of an opaque account while the store tracks as a visitor queues one link between them, in order with the events; any other `identify` only changes the actor. `reset` tracks as `*` again and forgets the traits; `identifyInstallation` after it starts another visitor. Each case runs `steps` on a new store; `actor` is what later events carry (`visitor N` is the Nth visitor the case started) and `queue` the waiting rows, oldest first. A step with `error` changes nothing.",
+  "cases": [
+    {
+      "name": "an installation identity is a new visitor",
+      "steps": [{ "identifyInstallation": true }],
+      "actor": "visitor 1",
+      "queue": []
+    },
+    {
+      "name": "the visitor survives another installation identity",
+      "steps": [{ "identifyInstallation": true }, { "identifyInstallation": true }],
+      "actor": "visitor 1",
+      "queue": []
+    },
+    {
+      "name": "identifying the visitor links it between the events",
+      "steps": [{ "identifyInstallation": true }, { "track": "a" }, { "identify": "user_42" }, { "track": "b" }],
+      "actor": "user_42",
+      "queue": [
+        { "track": "a", "externalId": "visitor 1" },
+        { "link": { "anonymousId": "visitor 1", "externalId": "user_42" } },
+        { "track": "b", "externalId": "user_42" }
+      ]
+    },
+    {
+      "name": "identifying the same account again links nothing",
+      "steps": [{ "identifyInstallation": true }, { "identify": "user_42" }, { "identify": "user_42" }],
+      "actor": "user_42",
+      "queue": [{ "link": { "anonymousId": "visitor 1", "externalId": "user_42" } }]
+    },
+    {
+      "name": "an installation identity keeps an identified account",
+      "steps": [{ "identifyInstallation": true }, { "identify": "user_42" }, { "identifyInstallation": true }],
+      "actor": "user_42",
+      "queue": [{ "link": { "anonymousId": "visitor 1", "externalId": "user_42" } }]
+    },
+    {
+      "name": "without an installation identity nothing is linked",
+      "steps": [{ "track": "a" }, { "identify": "user_42" }, { "track": "b" }],
+      "actor": "user_42",
+      "queue": [
+        { "track": "a", "externalId": "*" },
+        { "track": "b", "externalId": "user_42" }
+      ]
+    },
+    {
+      "name": "switching accounts without a visitor links nothing",
+      "steps": [{ "identifyInstallation": true }, { "identify": "user_42" }, { "identify": "user_7" }],
+      "actor": "user_7",
+      "queue": [{ "link": { "anonymousId": "visitor 1", "externalId": "user_42" } }]
+    },
+    {
+      "name": "after a reset the next account links a new visitor",
+      "steps": [
+        { "identifyInstallation": true },
+        { "identify": "user_42" },
+        { "reset": true },
+        { "track": "a" },
+        { "identifyInstallation": true },
+        { "identify": "user_7" }
+      ],
+      "actor": "user_7",
+      "queue": [
+        { "link": { "anonymousId": "visitor 1", "externalId": "user_42" } },
+        { "track": "a", "externalId": "*" },
+        { "link": { "anonymousId": "visitor 2", "externalId": "user_7" } }
+      ]
+    },
+    {
+      "name": "identifying the anonymous actor links nothing",
+      "steps": [{ "identifyInstallation": true }, { "identify": "*" }],
+      "actor": "*",
+      "queue": []
+    },
+    {
+      "name": "a visitor id cannot be identified",
+      "steps": [{ "identify": "anon:01926a2e-7b1c-4c3d-9f2e-5b1a2c3d4e5f", "error": true }],
+      "actor": "*",
+      "queue": []
+    }
+  ],
+  "takes": {
+    "description": "A take is one link alone or a contiguous run of track rows that stops before a link; batch limits apply within the run.",
+    "cases": [
+      { "name": "events before a link", "rows": ["track", "track", "link", "track"], "taken": [["track", "track"], ["link"], ["track"]] },
+      { "name": "a link first", "rows": ["link", "track", "track"], "taken": [["link"], ["track", "track"]] },
+      { "name": "two links", "rows": ["link", "link"], "taken": [["link"], ["link"]] }
+    ]
+  },
+  "request": {
+    "description": "A link is sent alone and uncompressed: `POST /v1/identify` with the write key as a bearer token, `Content-Type: application/json` and the body below.",
+    "body": { "anonymousId": "anon:01926a2e-7b1c-4c3d-9f2e-5b1a2c3d4e5f", "externalId": "user_42" }
+  },
+  "outcomes": {
+    "description": "What the response to a link does to it: as a batch, except that 422 (the visitor is linked to another account) also refuses it.",
+    "cases": [
+      { "name": "linked", "status": 204, "outcome": "delivered" },
+      { "name": "malformed", "status": 400, "outcome": "refused" },
+      { "name": "too large", "status": 413, "outcome": "refused" },
+      { "name": "linked to another account", "status": 422, "outcome": "refused" },
+      { "name": "a wrong write key", "status": 401, "outcome": "retry" },
+      { "name": "rate limited", "status": 429, "outcome": "retry" },
+      { "name": "unavailable", "status": 503, "outcome": "retry" },
+      { "name": "no response", "status": 0, "outcome": "retry" }
+    ]
+  }
+}

@@ -6,11 +6,44 @@ import {
   VERSION,
   type Options,
 } from "./configuration";
-import { deliveryOutcome, retryAfter, requestBody } from "./delivery";
+import {
+  deliveryOutcome,
+  linkOutcome,
+  retryAfter,
+  requestBody,
+} from "./delivery";
+import { isTypedEvent, type TypedEvent } from "./catalog";
 export type { Properties, Json, Scalar } from "./privacy";
 export type { Options } from "./configuration";
 export { deliveryOutcome, retryAfter } from "./delivery";
-function text(value: string, max: number) {
+export {
+  boolean,
+  catalog,
+  CatalogError,
+  defineEvents,
+  event,
+  integer,
+  number,
+  oneOf,
+  text,
+} from "./catalog";
+export type {
+  Catalog,
+  CatalogErrorReason,
+  CatalogEvent,
+  CatalogProperty,
+  DefinedEvents,
+  EventDeclaration,
+  EventDeclarations,
+  EventDefinition,
+  EventInput,
+  Property,
+  PropertyDeclarations,
+  PropertyType,
+  PropertyValue,
+  TypedEvent,
+} from "./catalog";
+function checked(value: string, max: number) {
   if (
     typeof value !== "string" ||
     !value.length ||
@@ -125,10 +158,10 @@ export function createClickman(options: Options) {
             body: JSON.stringify(body),
             signal,
           });
-          // Identify validation errors are permanent; batch handling follows v1 fixtures.
+          // Batches follow outcomes.json and links identity.json.
           const outcome =
-            first.kind === "identify" && response.status === 422
-              ? "refused"
+            first.kind === "identify"
+              ? linkOutcome(response.status)
               : deliveryOutcome(response.status);
           const wait = await store.finish(
             owner,
@@ -166,14 +199,34 @@ export function createClickman(options: Options) {
     });
     return inflight;
   }
-  async function track(
+  /** Tracks a typed event built from `defineEvents`, with optional context. */
+  function track(
+    event: TypedEvent,
+    context?: Properties,
+  ): Promise<string | null>;
+  /** Tracks an event by name with untyped properties. */
+  function track(
     event: string,
-    properties: Properties = {},
-    context: Properties = {},
-  ) {
+    properties?: Properties,
+    context?: Properties,
+  ): Promise<string | null>;
+  async function track(
+    name: string | TypedEvent,
+    second: Properties = {},
+    third: Properties = {},
+  ): Promise<string | null> {
     live();
     if (!consent) return null;
-    text(event, 200);
+    let event: string, properties: Properties, context: Properties;
+    if (typeof name === "string")
+      [event, properties, context] = [name, second, third];
+    else if (isTypedEvent(name))
+      [event, properties, context] = [name.event, name.properties, second];
+    else
+      throw new Error(
+        "Track an event name or an event built from defineEvents.",
+      );
+    checked(event, 200);
     const fragments = options.filterFragments ?? [];
     const eventProperties = prepared(properties, 128, fragments);
     const eventContext = prepared(
@@ -209,7 +262,7 @@ export function createClickman(options: Options) {
   async function identify(externalId: string) {
     live();
     if (!consent) return false;
-    text(externalId, 256);
+    checked(externalId, 256);
     if (externalId === "*" || externalId.startsWith("anon:"))
       throw new Error("Use an opaque user ID, not an email or anonymous ID.");
     const store = await storage();
